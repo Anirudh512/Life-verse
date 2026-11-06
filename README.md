@@ -87,4 +87,3 @@ The schema initializer is `npm run init-db`. The API and database use UTC for da
 ## Release status
 
 Do not treat this source as production-ready yet. Before release, finish persistent media storage, email recovery, privacy/retention policy, external connection setup, automated coverage, and platform build verification. Deploy to Render only in the planned final stage.
-

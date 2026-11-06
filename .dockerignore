@@ -1,0 +1,9 @@
+.git
+**/node_modules
+**/.dart_tool
+**/build
+**/.env
+**/.env.*
+!**/.env.example
+**/uploads
+.flutter-diagnose-tmp
