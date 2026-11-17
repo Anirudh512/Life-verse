@@ -1,0 +1,120 @@
+const futureSimService = require('../services/futureSimService');
+const { geminiService } = require('../ai/geminiService');
+
+class FutureSimController {
+
+    _parseJson(value, fallback) {
+        if (value == null) return fallback;
+        if (typeof value !== 'string') return value;
+        try {
+            return JSON.parse(value);
+        } catch (_) {
+            return fallback;
+        }
+    }
+    
+    async getUnlockStatus(req, res) {
+        try {
+            const { userId } = req.params;
+            const status = await futureSimService.checkUnlockStatus(userId);
+            res.json({ success: true, status });
+        } catch (error) {
+            console.error('[FutureSimController] Error fetching unlock status:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    }
+
+    /**
+     * Generates a Future Simulation (Alternative Timelines)
+     */
+    async simulateFuture(req, res) {
+        try {
+            const { userId, decisionQuestion } = req.body;
+            
+            // 1. Verify it is unlocked
+            const status = await futureSimService.checkUnlockStatus(userId);
+            if (!status.unlocked) {
+                return res.status(403).json({ success: false, error: 'Future Simulation Engine is still gathering data.' });
+            }
+
+            // 2. Fetch User Data
+            const { db } = require('../config/db');
+            const [memories] = await db.query('SELECT memory_tag, memory_content FROM twin_memories WHERE user_id = ?', [userId]);
+            const [taskRows] = await db.query(
+                'SELECT dimension, task_date, tasks_json FROM daily_tasks WHERE user_id = ? ORDER BY task_date DESC LIMIT 14',
+                [userId]
+            );
+            const [activityLogs] = await db.query(
+                'SELECT action_type, dimension, xp_gained, metadata, created_at FROM user_activity_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+                [userId]
+            );
+
+            const recentTasks = taskRows.flatMap(row => {
+                const tasks = this._parseJson(row.tasks_json, []);
+                if (!Array.isArray(tasks)) return [];
+                return tasks.map(task => ({
+                    title: task.title,
+                    dimension: row.dimension,
+                    completed: Boolean(task.completed),
+                    expReward: task.expReward,
+                    taskDate: row.task_date
+                }));
+            });
+
+            // 3. Build prompt for Gemini
+            let prompt = `You are the Future Simulation Engine for 'LifeVerse'. 
+            Based on a user's consistent habits and life history, you simulate possible futures.
+            Here is their data:
+            Memories: ${JSON.stringify(memories)}
+            Recent Tasks: ${JSON.stringify(recentTasks)}
+            Recent Activity Logs: ${JSON.stringify(activityLogs)}
+            `;
+            
+            if (decisionQuestion) {
+                prompt += `
+                The user has a decision to make: "${decisionQuestion}"
+                Generate two possible timelines (branches). 
+                Format the response strictly as a JSON object:
+                {
+                   "timelineA": { "title": "...", "description": "...", "risk": "..." },
+                   "timelineB": { "title": "...", "description": "...", "risk": "..." }
+                }
+                `;
+            } else {
+                prompt += `
+                Generate a 1-year general life projection predicting where their current momentum will lead them in terms of Career, Health, and Relationships.
+                Format the response as a JSON object:
+                {
+                   "projection": "...",
+                   "milestones": ["...", "..."],
+                   "risks": ["..."]
+                }
+                `;
+            }
+            
+            let simulation;
+            try {
+                const result = await geminiService.model.generateContent(prompt);
+                const responseText = result.response.text().trim();
+                const cleanJsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+                simulation = JSON.parse(cleanJsonStr);
+            } catch (aiErr) {
+                console.error('[FutureSimController] Gemini generation/parsing failed:', aiErr.message);
+                return res.status(503).json({
+                    success: false,
+                    isAiOffline: true,
+                    error: 'Future Simulation Engine is temporarily unavailable. Please try again shortly.'
+                });
+            }
+
+            simulation.disclaimer = "Advisory: Future simulations are AI-generated speculative possibilities based on habit trajectories, not guaranteed predictions.";
+
+            res.json({ success: true, simulation });
+        } catch (error) {
+            console.error('[FutureSimController] Error generating simulation:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    }
+}
+
+module.exports = new FutureSimController();

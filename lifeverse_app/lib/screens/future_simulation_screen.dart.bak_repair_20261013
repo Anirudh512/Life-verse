@@ -1,0 +1,396 @@
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import '../services/user_state.dart';
+import '../services/api_service.dart';
+
+class FutureSimulationScreen extends StatefulWidget {
+  const FutureSimulationScreen({super.key});
+
+  @override
+  State<FutureSimulationScreen> createState() => _FutureSimulationScreenState();
+}
+
+class _FutureSimulationScreenState extends State<FutureSimulationScreen> {
+  final TextEditingController _decisionController = TextEditingController();
+  Map<String, dynamic>? _status;
+  Map<String, dynamic>? _simulation;
+  bool _isLoading = true;
+  bool _isSimulating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  @override
+  void dispose() {
+    _decisionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadStatus() async {
+    try {
+      final userId = Provider.of<UserState>(context, listen: false).userId;
+      if (userId.isNotEmpty) {
+        final data = await ApiService.getFutureUnlockStatus(userId);
+        if (data['success'] == true) {
+          setState(() => _status = data['status']);
+        }
+      }
+    } catch (e) {
+      print('Future status error: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _runSimulation({String? decision}) async {
+    setState(() => _isSimulating = true);
+    try {
+      final userId = Provider.of<UserState>(context, listen: false).userId;
+      final data = await ApiService.simulateFuture(userId, decisionQuestion: decision);
+      if (data['success'] == true && mounted) {
+        setState(() => _simulation = data['simulation']);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(data['error'] ?? 'Simulation unavailable')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSimulating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unlocked = _status?['unlocked'] == true;
+    final progress = (_status?['progress'] as num?)?.toInt() ?? 0;
+    final currentData = (_status?['currentData'] as num?)?.toInt() ?? 0;
+    final requiredData = (_status?['requiredData'] as num?)?.toInt() ?? 100;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // Cybernetic / Matrix Background
+          Positioned.fill(
+            child: Image.network(
+              'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=3000&auto=format&fit=crop',
+              fit: BoxFit.cover,
+              opacity: const AlwaysStoppedAnimation(0.2),
+            ),
+          ),
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  colors: [Colors.deepPurpleAccent.withOpacity(0.3), Colors.black],
+                  radius: 1.5,
+                ),
+              ),
+            ),
+          ),
+          
+          SafeArea(
+            child: Column(
+              children: [
+                _buildAppBar(),
+                Expanded(
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator(color: Colors.deepPurpleAccent))
+                      : SingleChildScrollView(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 10),
+                              Text("The Oracle", style: TextStyle(color: Colors.deepPurpleAccent.shade200, fontSize: 14, letterSpacing: 2)),
+                              const SizedBox(height: 5),
+                              const Text("Vision Engine", style: TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 30),
+                              
+                              _buildStatusCard(unlocked, progress, currentData, requiredData),
+                              
+                              if (unlocked) ...[
+                                const SizedBox(height: 40),
+                                const Text("Simulation Protocol", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 15),
+                                _buildDecisionSimulator(),
+                                const SizedBox(height: 40),
+                                const Text("Neural Projection", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 15),
+                                _buildProjectionCard(),
+                                if (_simulation != null) ...[
+                                  const SizedBox(height: 25),
+                                  _buildDisclaimerCard(),
+                                ],
+                              ],
+                              const SizedBox(height: 50),
+                            ],
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      child: Row(
+        children: [
+          IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusCard(bool unlocked, int progress, int currentData, int requiredData) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(25),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.03),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: unlocked ? Colors.deepPurpleAccent.withOpacity(0.5) : Colors.white10),
+            boxShadow: unlocked ? [BoxShadow(color: Colors.deepPurpleAccent.withOpacity(0.2), blurRadius: 20)] : [],
+          ),
+          child: Column(
+            children: [
+              Icon(unlocked ? Icons.visibility : Icons.visibility_off, color: unlocked ? Colors.deepPurpleAccent : Colors.white38, size: 60)
+                  .animate(onPlay: (c) => c.repeat(reverse: true)).scaleXY(end: 1.05, duration: 2.seconds),
+              const SizedBox(height: 20),
+              Text(
+                unlocked ? "Engine Online" : "Gathering Data...",
+                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                unlocked
+                    ? "Sufficient data acquired. The Vision Engine is ready to calculate future trajectories."
+                    : "The Engine requires more data points from your Evolution Matrix and Twin Mind to unlock.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: unlocked ? Colors.white70 : Colors.white54, fontSize: 14),
+              ),
+              if (!unlocked) ...[
+                const SizedBox(height: 25),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: LinearProgressIndicator(
+                    value: progress / 100,
+                    minHeight: 8,
+                    backgroundColor: Colors.white10,
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.deepPurpleAccent),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  "$currentData / $requiredData Data Points",
+                  style: const TextStyle(color: Colors.white54, fontSize: 12, letterSpacing: 1),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ).animate().fadeIn(duration: 800.ms).slideY(begin: 0.1);
+  }
+
+  Widget _buildDecisionSimulator() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.deepPurpleAccent.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Crossroads Simulator", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          const Text("Input a major life decision. The Engine will run thousands of scenarios based on your exact profile.", style: TextStyle(color: Colors.white54, fontSize: 12)),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _decisionController,
+            style: const TextStyle(color: Colors.white),
+            enabled: !_isSimulating,
+            decoration: InputDecoration(
+              hintText: "What if I...",
+              hintStyle: const TextStyle(color: Colors.white38),
+              filled: true,
+              fillColor: Colors.black54,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+              suffixIcon: IconButton(
+                icon: _isSimulating
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.deepPurpleAccent))
+                    : const Icon(Icons.psychology, color: Colors.deepPurpleAccent),
+                onPressed: !_isSimulating ? () => _runSimulation(decision: _decisionController.text.trim()) : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProjectionCard() {
+    if (_simulation == null) {
+      return Center(
+        child: ElevatedButton.icon(
+          onPressed: _isSimulating ? null : () => _runSimulation(),
+          icon: _isSimulating
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.flash_on, color: Colors.white),
+          label: Text(_isSimulating ? 'Calculating Trajectories...' : 'Run General 1-Year Simulation'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.deepPurpleAccent,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+          ),
+        ),
+      );
+    }
+
+    if (_simulation!.containsKey('timelineA')) {
+      return Column(
+        children: [
+          _buildTimelineCard(_simulation!['timelineA'], Colors.greenAccent),
+          const SizedBox(height: 20),
+          _buildTimelineCard(_simulation!['timelineB'], Colors.orangeAccent),
+        ],
+      ).animate().fadeIn(duration: 1.seconds);
+    }
+
+    final projection = _simulation!['projection']?.toString() ?? '';
+    final milestones = (_simulation!['milestones'] as List?)?.cast<String>() ?? [];
+    final risks = (_simulation!['risks'] as List?)?.cast<String>() ?? [];
+
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(projection, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.6, fontStyle: FontStyle.italic)),
+          const SizedBox(height: 25),
+          if (milestones.isNotEmpty) ...[
+            const Text("Predicted Milestones", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            ...milestones.map((m) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 16),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(m, style: const TextStyle(color: Colors.white70))),
+                    ],
+                  ),
+                )),
+          ],
+          const SizedBox(height: 20),
+          if (risks.isNotEmpty) ...[
+            const Text("Calculated Risks", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            ...risks.map((r) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 16),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(r, style: const TextStyle(color: Colors.white70))),
+                    ],
+                  ),
+                )),
+          ],
+        ],
+      ),
+    ).animate().fadeIn(duration: 1.seconds);
+  }
+
+  Widget _buildTimelineCard(Map<String, dynamic>? timeline, Color color) {
+    if (timeline == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.alt_route, color: color, size: 20),
+              const SizedBox(width: 10),
+              Text(timeline['title'] ?? 'Timeline', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 15),
+          Text(timeline['description'] ?? '', style: const TextStyle(color: Colors.white, height: 1.5)),
+          if (timeline['risk'] != null) ...[
+            const SizedBox(height: 15),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber, color: Colors.white54, size: 16),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('Risk: ${timeline['risk']}', style: const TextStyle(color: Colors.white70, fontSize: 12))),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDisclaimerCard() {
+    final disclaimer = _simulation?['disclaimer']?.toString() ??
+        'Advisory: Future simulations are AI-generated speculative possibilities based on habit trajectories, not guaranteed predictions.';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, color: Colors.white38, size: 16),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              disclaimer,
+              style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

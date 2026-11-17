@@ -1,0 +1,63 @@
+import 'package:flutter/foundation.dart';
+
+enum LifeDimension { ascended, neutral, shadow }
+
+class UserState extends ChangeNotifier {
+  String? _userId;
+  String? _sessionToken;
+  String? _username;
+  String? _fullName;
+  Map<String, dynamic> _appState = {};
+  bool _isRestoringSession = true;
+
+  String get userId => _userId ?? '';
+  String? get sessionToken => _sessionToken;
+  String get username => _username ?? '';
+  String get fullName => _fullName ?? '';
+  Map<String, dynamic> get appState => _appState;
+  bool get isLoggedIn => _userId != null && _sessionToken != null;
+  bool get isRestoringSession => _isRestoringSession;
+
+  LifeDimension get currentDimension {
+    final dim = _appState['dimension'] as String?;
+    if (dim == 'ascended') return LifeDimension.ascended;
+    if (dim == 'shadow') return LifeDimension.shadow;
+    return LifeDimension.neutral;
+  }
+
+  void setSession({
+    required String userId,
+    required String sessionToken,
+    String? username,
+    String? fullName,
+    Map<String, dynamic>? appState,
+  }) {
+    _userId = userId;
+    _sessionToken = sessionToken;
+    _username = username;
+    _fullName = fullName;
+    if (appState != null) _appState = appState;
+    _isRestoringSession = false;
+    notifyListeners();
+  }
+
+  void updateAppState(Map<String, dynamic> state) {
+    _appState = {..._appState, ...state};
+    notifyListeners();
+  }
+
+  void clearSession() {
+    _userId = null;
+    _sessionToken = null;
+    _username = null;
+    _fullName = null;
+    _appState = {};
+    _isRestoringSession = false;
+    notifyListeners();
+  }
+
+  void setRestoringComplete() {
+    _isRestoringSession = false;
+    notifyListeners();
+  }
+}

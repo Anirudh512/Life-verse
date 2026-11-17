@@ -1,0 +1,278 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'dart:async';
+import '../services/user_state.dart';
+import '../services/api_service.dart';
+import '../widgets/flashcard_widget.dart';
+import '../widgets/daily_review_survey.dart';
+import '../utils/app_snackbar.dart';
+
+class HDECategoryTasksScreen extends StatefulWidget {
+  const HDECategoryTasksScreen({super.key});
+
+  @override
+  State<HDECategoryTasksScreen> createState() => _HDECategoryTasksScreenState();
+}
+
+class _HDECategoryTasksScreenState extends State<HDECategoryTasksScreen> {
+  List<dynamic> _tasks = [];
+  List<dynamic> _flashcards = [];
+  List<String> _surveyQuestions = [];
+  bool _isLoading = true;
+  bool _isLocked = false;
+  bool _showSurvey = false;
+  String _dimension = '';
+  String _lockedMessage = '';
+  Timer? _countdownTimer;
+  String _timeUntilMidnight = '';
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_dimension.isEmpty) {
+      _dimension = ModalRoute.of(context)!.settings.arguments as String? ?? 'General';
+      _generateTasks();
+    }
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startMidnightCountdown() {
+    _updateTimer();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _updateTimer();
+    });
+  }
+
+  void _updateTimer() {
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    final diff = tomorrow.difference(now);
+    
+    final hours = diff.inHours.toString().padLeft(2, '0');
+    final minutes = (diff.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (diff.inSeconds % 60).toString().padLeft(2, '0');
+    
+    if (mounted) {
+      setState(() {
+        _timeUntilMidnight = "$hours:$minutes:$seconds";
+      });
+    }
+  }
+
+  Future<void> _generateTasks() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final userId = Provider.of<UserState>(context, listen: false).userId;
+      final response = await ApiService.generateHDETasks(userId, _dimension);
+      
+      setState(() {
+        _isLocked = response['isLocked'] ?? false;
+        
+        final data = response['data'] ?? {};
+        final rawTasks = data['tasks'] ?? [];
+        _flashcards = data['flashcards'] ?? [];
+        _surveyQuestions = List<String>.from(data['surveyQuestions'] ?? []);
+
+        // Filter out completed tasks from the UI
+        _tasks = rawTasks.where((t) => t['completed'] != true).toList();
+
+        if (_isLocked && _tasks.isEmpty) {
+           _lockedMessage = response['message'] ?? "All tasks completed! Amazing work.";
+           _startMidnightCountdown();
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        AppSnackBar.show(context, 'Error generating tasks: $e', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _completeTask(dynamic task, int index) async {
+    final userId = Provider.of<UserState>(context, listen: false).userId;
+    
+    // Optimistic UI update
+    setState(() {
+      _tasks.removeAt(index);
+    });
+
+    AppSnackBar.show(context, 'Task completed! +XP', isSuccess: true);
+
+    try {
+      final response = await ApiService.completeDailyTask(userId, _dimension, task['title']);
+      final allCompleted = response['allCompleted'] ?? false;
+
+      if (allCompleted && mounted) {
+        setState(() {
+          _showSurvey = true;
+        });
+      }
+    } catch (e) {
+      print("Error completing task: $e");
+    }
+  }
+
+  void _onSurveyComplete(List<Map<String, String>> answers) async {
+    final userId = Provider.of<UserState>(context, listen: false).userId;
+    try {
+       await ApiService.submitDailySurvey(userId, _dimension, answers);
+    } catch (e) {
+       print("Failed to submit survey: $e");
+    }
+
+    setState(() {
+      _showSurvey = false;
+      _isLocked = true;
+      _lockedMessage = "All tasks and review completed! See you tomorrow.";
+      _startMidnightCountdown();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0A),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: Text('$_dimension Training', style: const TextStyle(color: Colors.white)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Stack(
+        children: [
+          if (_isLoading)
+            const Center(child: CircularProgressIndicator(color: Color(0xFF1E88E5)))
+          else
+            SingleChildScrollView(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_isLocked && _tasks.isEmpty)
+                     _buildLockedState(),
+                     
+                  if (_tasks.isNotEmpty) ...[
+                    const Text("Today's Objectives", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 15),
+                    ..._tasks.asMap().entries.map((entry) => _buildTaskCard(entry.value, entry.key)),
+                  ],
+                  
+                  if (_flashcards.isNotEmpty && !_isLocked) ...[
+                    const SizedBox(height: 30),
+                    const Text("Motivation & Care", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 15),
+                    ..._flashcards.map((fc) => FlashcardWidget(
+                      frontText: fc['frontText'] ?? '',
+                      backText: fc['backText'] ?? '',
+                      themeColor: _getThemeColor(),
+                    )),
+                  ]
+                ],
+              ),
+            ),
+          
+          if (_showSurvey)
+            Positioned.fill(
+              child: DailyReviewSurvey(
+                questions: _surveyQuestions,
+                onComplete: _onSurveyComplete,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Color _getThemeColor() {
+    switch (_dimension.toLowerCase()) {
+      case 'physical': return Colors.orangeAccent;
+      case 'cognitive': return Colors.blueAccent;
+      case 'psychosocial': return Colors.pinkAccent;
+      case 'moral': return Colors.tealAccent;
+      default: return const Color(0xFF1E88E5);
+    }
+  }
+
+  Widget _buildLockedState() {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(30),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111111),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.lock_clock, color: Colors.amberAccent, size: 50),
+            const SizedBox(height: 20),
+            Text(_lockedMessage, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 16)),
+            const SizedBox(height: 30),
+            const Text("Resets in", style: TextStyle(color: Colors.white38, fontSize: 12)),
+            const SizedBox(height: 5),
+            Text(_timeUntilMidnight, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 2)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTaskCard(dynamic task, int index) {
+    final title = task['title'] ?? 'Unknown Task';
+    final desc = task['description'] ?? '';
+    final exp = task['expReward'] ?? 25;
+    final color = _getThemeColor();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      decoration: BoxDecoration(
+        color: const Color(0xFF151515),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(Icons.star, color: color),
+        ),
+        title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 5),
+            Text(desc, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            const SizedBox(height: 5),
+            Text("+$exp XP", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 12)),
+          ],
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.check_circle_outline, color: Colors.greenAccent),
+          onPressed: () => _completeTask(task, index),
+        ),
+      ),
+    );
+  }
+}
