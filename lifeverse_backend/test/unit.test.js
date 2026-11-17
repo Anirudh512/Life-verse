@@ -380,6 +380,50 @@ test('Vision Engine stores helpfulness feedback only for the owning user simulat
     assert.deepEqual(calls[1].params, ['alice', 'sim-1', 0, 0]);
 });
 
+test('Twin Mind conversation history exposes older pages without dropping stored rows', async () => {
+    let capturedSql;
+    let capturedParams;
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+        id: String(101 - index),
+        persona: 'Mentor',
+        role: index % 2 === 0 ? 'assistant' : 'user',
+        content: `message-${index}`
+    }));
+    replace(db, 'query', async (sql, params) => {
+        capturedSql = sql;
+        capturedParams = params;
+        return [rows];
+    });
+    const res = response();
+
+    await digitalTwinController.getConversationHistory({
+        params: { userId: 'alice' },
+        query: { persona: 'Mentor' }
+    }, res);
+
+    assert.equal(res.payload.success, true);
+    assert.equal(res.payload.messages.length, 100);
+    assert.equal(res.payload.messages[0].id, '2');
+    assert.equal(res.payload.messages.at(-1).id, '101');
+    assert.equal(res.payload.hasMore, true);
+    assert.equal(res.payload.nextBeforeId, '2');
+    assert.match(capturedSql, /ORDER BY id DESC LIMIT \?/);
+    assert.deepEqual(capturedParams, ['alice', 'Mentor', 101]);
+});
+
+test('Twin Mind history rejects an invalid paging cursor before querying MySQL', async () => {
+    replace(db, 'query', async () => assert.fail('invalid cursor must not reach SQL'));
+    const res = response();
+
+    await digitalTwinController.getConversationHistory({
+        params: { userId: 'alice' },
+        query: { beforeId: '1 OR 1=1' }
+    }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.payload.success, false);
+});
+
 test('Twin Mind saves only explicitly requested memories with the persisted conversation', async () => {
     let memoryInsertCount = 0;
     let savedMemoryContent;
